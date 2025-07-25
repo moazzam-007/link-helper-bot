@@ -56,6 +56,12 @@ async def get_links_via_api(page_url: str) -> list:
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = telegram.Bot(token=TOKEN)
 app = Flask(__name__)
+from asgiref.wsgi import WsgiToAsgi # Yeh line sabse upar imports ke saath daalein
+
+# ... baaki ka code ...
+
+app = Flask(__name__)
+asgi_app = WsgiToAsgi(app) # Yeh nayi line app = Flask... ke theek neeche daalein
 
 async def handle_update(update):
     """Is function mein bot ka saara async logic hai."""
