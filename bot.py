@@ -6,12 +6,11 @@ import telegram
 import asyncio
 
 # ===================================================================
-# === Helper functions (Simplified Headers ke saath) ===
+# === Helper functions (Golden Set of Headers ke saath) ===
 # ===================================================================
 
 async def get_final_url_from_redirect(start_url: str) -> str | None:
     try:
-        # Headers ko simple kiya gaya hai
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
             "Referer": "https://www.wishlink.com/"
@@ -20,7 +19,7 @@ async def get_final_url_from_redirect(start_url: str) -> str | None:
             response = await client.get(start_url, headers=headers, timeout=15, follow_redirects=True)
             return str(response.url)
     except httpx.RequestError as e:
-        print(f"Redirect Error: {e}") # Behtar logging ke liye
+        print(f"Redirect Error: {e}")
         return None
 
 async def get_links_via_api(page_url: str) -> list:
@@ -29,11 +28,21 @@ async def get_links_via_api(page_url: str) -> list:
         return []
     post_id = match.group(1)
 
-    # === Headers ko ekdum simple kar diya gaya hai ===
+    # === Headers ka sabse best aur final version ===
     headers = {
         'accept': '*/*',
+        'accept-language': 'en-GB,en-IN;q=0.9,en-US;q=0.8,en;q=0.7,hi;q=0.6',
+        'content-type': 'application/json',
+        'gaid': '', # Sahi naam, bina semicolon ke
         'origin': 'https://www.wishlink.com',
+        'priority': 'u=1, i',
         'referer': 'https://www.wishlink.com/',
+        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-site',
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
     }
     
@@ -48,7 +57,7 @@ async def get_links_via_api(page_url: str) -> list:
             final_product_links = [product['purchaseUrl'] for product in products if 'purchaseUrl' in product]
             return final_product_links
     except httpx.RequestError as e:
-        print(f"API Error: {e}") # Behtar logging ke liye
+        print(f"API Error: {e}")
         return []
 
 # =======================================================
