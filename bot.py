@@ -1,14 +1,12 @@
 import os
 import re
-import requests # Iski zaroorat ab sirf synchronous function ke liye hai
-import httpx     # Naya import async requests ke liye
-import json
-from flask import Flask, request
+import httpx
+from fastapi import FastAPI, Request
 import telegram
 import asyncio
 
 # ===================================================================
-# === Helper functions (Ab Async/Await ke saath) ===
+# === Helper functions (Inmein koi badlaav nahi) ===
 # ===================================================================
 
 async def get_final_url_from_redirect(start_url: str) -> str | None:
@@ -50,21 +48,16 @@ async def get_links_via_api(page_url: str) -> list:
         return []
 
 # =======================================================
-# === Telegram Bot aur Web Service ka Code ===
+# === Naya Code: FastAPI aur Telegram Bot ===
 # =======================================================
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = telegram.Bot(token=TOKEN)
-app = Flask(__name__)
-from asgiref.wsgi import WsgiToAsgi # Yeh line sabse upar imports ke saath daalein
+app = FastAPI()
 
-# ... baaki ka code ...
-
-app = Flask(__name__)
-asgi_app = WsgiToAsgi(app) # Yeh nayi line app = Flask... ke theek neeche daalein
-
-async def handle_update(update):
+async def handle_update(update_data):
     """Is function mein bot ka saara async logic hai."""
+    update = telegram.Update.de_json(update_data, bot)
     if not update.message or not update.message.text:
         return
         
@@ -81,12 +74,10 @@ async def handle_update(update):
         
         all_final_links = []
         if '/share/' in text:
-            # Ab hum async function ko await karenge
             final_link = await get_final_url_from_redirect(text)
             if final_link:
                 all_final_links.append(final_link)
         else:
-            # Ab hum async function ko await karenge
             links_from_api = await get_links_via_api(text)
             if links_from_api:
                 all_final_links.extend(links_from_api)
@@ -99,17 +90,16 @@ async def handle_update(update):
         await bot.send_message(chat_id=chat_id, text=response_message)
         
     except Exception as e:
-        await bot.send_message(chat_id=chat_id, text=f"An error occurred: {e}")
+        error_message = f"An error occurred: {e}"
+        print(error_message) # Server par log karne ke liye
+        await bot.send_message(chat_id=chat_id, text=error_message)
 
-@app.route('/webhook', methods=['POST'])
-def webhook_handler():
-    update = telegram.Update.de_json(request.get_json(force=True), bot)
-    asyncio.run(handle_update(update))
-    return 'ok'
+@app.post('/webhook')
+async def webhook_handler(request: Request):
+    update_data = await request.json()
+    asyncio.create_task(handle_update(update_data))
+    return {'status': 'ok'}
 
-@app.route('/')
+@app.get('/')
 def index():
     return 'Bot is running!'
-
-if __name__ == "__main__":
-    app.run(threaded=True)
