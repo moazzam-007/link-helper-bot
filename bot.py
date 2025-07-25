@@ -6,7 +6,7 @@ import telegram
 import asyncio
 
 # ===================================================================
-# === Helper functions (Inmein koi badlaav nahi) ===
+# === Helper functions ===
 # ===================================================================
 
 async def get_final_url_from_redirect(start_url: str) -> str | None:
@@ -32,6 +32,7 @@ async def get_links_via_api(page_url: str) -> list:
         'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Windows"', 'sec-fetch-dest': 'empty',
         'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-site',
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+        # Expired wishlinkid yahan se hata diya gaya hai
     }
     
     api_url = f'https://api.wishlink.com/api/store/getPostOrCollectionProducts?page=1&limit=50&postType=POST&postOrCollectionId={post_id}&sourceApp=STOREFRONT'
@@ -44,11 +45,12 @@ async def get_links_via_api(page_url: str) -> list:
             products = data.get('data', {}).get('products', [])
             final_product_links = [product['purchaseUrl'] for product in products if 'purchaseUrl' in product]
             return final_product_links
-    except httpx.RequestError:
+    except httpx.RequestError as e:
+        print(f"API Error: {e}") # Debugging ke liye error print karein
         return []
 
 # =======================================================
-# === Naya Code: FastAPI aur Telegram Bot ===
+# === FastAPI aur Telegram Bot Code ===
 # =======================================================
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -97,6 +99,7 @@ async def handle_update(update_data):
 @app.post('/webhook')
 async def webhook_handler(request: Request):
     update_data = await request.json()
+    # create_task isse lamba process background me chala jaata hai aur Telegram ko turant reply mil jaata hai
     asyncio.create_task(handle_update(update_data))
     return {'status': 'ok'}
 
