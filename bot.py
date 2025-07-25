@@ -4,9 +4,10 @@ import requests
 import json
 from flask import Flask, request
 import telegram
+import asyncio
 
 # ===================================================================
-# === Purane functions jo humne pehle banaye the (koi badlaav nahi) ===
+# === Helper functions (Inmein koi badlaav nahi) ===
 # ===================================================================
 
 def get_final_url_from_redirect(start_url):
@@ -44,30 +45,30 @@ def get_links_via_api(page_url):
     except requests.RequestException:
         return []
 
-# ================================================
-# === Naya Code: Telegram Bot aur Web Service ===
-# ================================================
+# =======================================================
+# === Telegram Bot aur Web Service ka Conversational Code ===
+# =======================================================
 
-# BotFather se mila token yahan daalna hai, lekin hum ise Environment Variable se lenge
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = telegram.Bot(token=TOKEN)
-
-# Flask Web Service start kar rahe hain
 app = Flask(__name__)
 
-@app.route('/webhook', methods=['POST'])
-def webhook_handler():
-    # Telegram se aaya hua message
-    update = telegram.Update.de_json(request.get_json(force=True), bot)
-    
+# === YAHAN BADLAAV KIYA GAYA HAI ===
+async def handle_update(update):
+    """Is function mein bot ka saara logic hai."""
     chat_id = update.message.chat.id
     text = update.message.text
 
-    # User ke message ko process kar rahe hain
+    # 1. /start command ke liye
+    if text == "/start":
+        welcome_message = "Hi! I am your Link Helper Bot. \n\nPlease send me a Wishlink URL to get started."
+        await bot.send_message(chat_id=chat_id, text=welcome_message)
+        return
+
+    # 2. URL process karne ke liye
     try:
-        bot.send_message(chat_id=chat_id, text="Processing... Please wait.")
+        await bot.send_message(chat_id=chat_id, text="Processing... Please wait. ⏳")
         
-        # User ne jo link bheja hai, uspar kaam shuru
         all_final_links = []
         if '/share/' in text:
             final_link = get_final_url_from_redirect(text)
@@ -78,20 +79,23 @@ def webhook_handler():
             if links_from_api:
                 all_final_links.extend(links_from_api)
 
-        # Result wapas bhej rahe hain
         if all_final_links:
-            response_message = f"Found {len(all_final_links)} links:\n\n" + "\n\n".join(all_final_links)
+            # Result bhej rahe hain "Done!" ke saath
+            response_message = f"Done! ✨\nFound {len(all_final_links)} links:\n\n" + "\n\n".join(all_final_links)
         else:
-            response_message = "Sorry, I couldn't find any links from the URL you provided."
+            response_message = "Sorry, I couldn't find any links from the URL you provided. Please check the link and try again."
             
-        bot.send_message(chat_id=chat_id, text=response_message)
+        await bot.send_message(chat_id=chat_id, text=response_message)
         
     except Exception as e:
-        bot.send_message(chat_id=chat_id, text=f"An error occurred: {e}")
-        
+        await bot.send_message(chat_id=chat_id, text=f"An error occurred: {e}")
+
+@app.route('/webhook', methods=['POST'])
+def webhook_handler():
+    update = telegram.Update.de_json(request.get_json(force=True), bot)
+    asyncio.run(handle_update(update))
     return 'ok'
 
-# Ek simple sa route yeh check karne ke liye ki service chal rahi hai ya nahi
 @app.route('/')
 def index():
     return 'Bot is running!'
