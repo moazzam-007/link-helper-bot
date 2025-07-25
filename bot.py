@@ -26,13 +26,14 @@ async def get_links_via_api(page_url: str) -> list:
 
     headers = {
         'accept': '*/*', 'accept-language': 'en-GB,en-IN;q=0.9,en-US;q=0.8,en;q=0.7,hi;q=0.6',
-        'content-type': 'application/json', 'gaid;': '', 'origin': 'https://www.wishlink.com',
+        'content-type': 'application/json',
+        'gaid': '', # <<< YAHAN BADLAAV KIYA GAYA HAI (SEMICOLON HATA DIYA)
+        'origin': 'https://www.wishlink.com',
         'priority': 'u=1, i', 'referer': 'https://www.wishlink.com/',
         'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
         'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"Windows"', 'sec-fetch-dest': 'empty',
         'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-site',
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-        # Expired wishlinkid yahan se hata diya gaya hai
     }
     
     api_url = f'https://api.wishlink.com/api/store/getPostOrCollectionProducts?page=1&limit=50&postType=POST&postOrCollectionId={post_id}&sourceApp=STOREFRONT'
@@ -46,7 +47,7 @@ async def get_links_via_api(page_url: str) -> list:
             final_product_links = [product['purchaseUrl'] for product in products if 'purchaseUrl' in product]
             return final_product_links
     except httpx.RequestError as e:
-        print(f"API Error: {e}") # Debugging ke liye error print karein
+        print(f"API Error: {e}")
         return []
 
 # =======================================================
@@ -93,13 +94,12 @@ async def handle_update(update_data):
         
     except Exception as e:
         error_message = f"An error occurred: {e}"
-        print(error_message) # Server par log karne ke liye
+        print(error_message)
         await bot.send_message(chat_id=chat_id, text=error_message)
 
 @app.post('/webhook')
 async def webhook_handler(request: Request):
     update_data = await request.json()
-    # create_task isse lamba process background me chala jaata hai aur Telegram ko turant reply mil jaata hai
     asyncio.create_task(handle_update(update_data))
     return {'status': 'ok'}
 
