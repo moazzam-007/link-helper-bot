@@ -1,72 +1,79 @@
 import os
 import re
-import httpx
-from fastapi import FastAPI, Request
+import requests
+from flask import Flask, request
+from asgiref.wsgi import WsgiToAsgi
 import telegram
 import asyncio
-
-# ===================================================================
-# === Helper functions (Golden Set of Headers ke saath) ===
-# ===================================================================
-
-async def get_final_url_from_redirect(start_url: str) -> str | None:
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-            "Referer": "https://www.wishlink.com/"
-        }
-        async with httpx.AsyncClient() as client:
-            response = await client.get(start_url, headers=headers, timeout=15, follow_redirects=True)
-            return str(response.url)
-    except httpx.RequestError as e:
-        print(f"Redirect Error: {e}")
-        return None
-
-async def get_links_via_api(page_url: str) -> list:
-    match = re.search(r'/post/(\d+)', page_url)
-    if not match:
-        return []
-    post_id = match.group(1)
-
-    # === Headers ka sabse best aur final version ===
-    headers = {
-        'accept': '*/*',
-        'accept-language': 'en-GB,en-IN;q=0.9,en-US;q=0.8,en;q=0.7,hi;q=0.6',
-        'content-type': 'application/json',
-        'gaid': '', # Sahi naam, bina semicolon ke
-        'origin': 'https://www.wishlink.com',
-        'priority': 'u=1, i',
-        'referer': 'https://www.wishlink.com/',
-        'sec-ch-ua': '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-site',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-    }
-    
-    api_url = f'https://api.wishlink.com/api/store/getPostOrCollectionProducts?page=1&limit=50&postType=POST&postOrCollectionId={post_id}&sourceApp=STOREFRONT'
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(api_url, headers=headers, timeout=20)
-            response.raise_for_status()
-            data = response.json()
-            products = data.get('data', {}).get('products', [])
-            final_product_links = [product['purchaseUrl'] for product in products if 'purchaseUrl' in product]
-            return final_product_links
-    except httpx.RequestError as e:
-        print(f"API Error: {e}")
-        return []
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from urllib.parse import urljoin
 
 # =======================================================
-# === FastAPI aur Telegram Bot Code (Koi Badlaav Nahi) ===
+# === Selenium Helper Function (For Docker Environment) ===
+# =======================================================
+def get_links_with_selenium(page_url):
+    print("Selenium ke zariye links nikale ja rahe hain...")
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920x1080")
+    
+    # Docker container ke andar ka fixed path
+    chrome_options.binary_location = "/usr/bin/google-chrome"
+    
+    driver = None
+    try:
+        # Docker container ke andar ka fixed path
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(page_url)
+        
+        # Page ke poori tarah load hone ka intezaar
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/share/']"))
+        )
+        
+        # Page se links nikalna
+        link_elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/share/']")
+        found_links = set()
+        for link_tag in link_elements:
+            href = link_tag.get_attribute('href')
+            if href:
+                full_redirect_link = urljoin(page_url, href)
+                found_links.add(full_redirect_link)
+        
+        print(f"Selenium se {len(found_links)} links mile.")
+        return list(found_links)
+
+    except Exception as e:
+        print(f"Selenium Error: {e}")
+        return []
+    finally:
+        if driver:
+            driver.quit()
+
+def get_final_url_from_redirect(start_url):
+    """Yeh function synchronous hai, isliye ise alag se handle karenge"""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"}
+        response = requests.get(start_url, timeout=15, headers=headers, allow_redirects=True)
+        return response.url
+    except requests.RequestException:
+        return None
+        
+# =======================================================
+# === Bot Logic & Server Code ===
 # =======================================================
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = telegram.Bot(token=TOKEN)
-app = FastAPI()
+app = Flask(__name__)
+asgi_app = WsgiToAsgi(app) # WSGI-to-ASGI translator
 
 async def handle_update(update_data):
     update = telegram.Update.de_json(update_data, bot)
@@ -86,18 +93,22 @@ async def handle_update(update_data):
         
         all_final_links = []
         if '/share/' in text:
-            final_link = await get_final_url_from_redirect(text)
-            if final_link:
-                all_final_links.append(final_link)
+            # Simple redirect link ke liye
+            link = get_final_url_from_redirect(text)
+            if link:
+                all_final_links.append(link)
         else:
-            links_from_api = await get_links_via_api(text)
-            if links_from_api:
-                all_final_links.extend(links_from_api)
+            # Landing page ke liye Selenium
+            redirect_links = get_links_with_selenium(text)
+            for r_link in redirect_links:
+                final_link = get_final_url_from_redirect(r_link)
+                if final_link:
+                    all_final_links.append(final_link)
 
         if all_final_links:
             response_message = f"Done! ✨\nFound {len(all_final_links)} links:\n\n" + "\n\n".join(all_final_links)
         else:
-            response_message = "Sorry, I couldn't find any links from the URL you provided. Please check the link and try again."
+            response_message = "Sorry, I couldn't find any links. Please check the URL and try again."
             
         await bot.send_message(chat_id=chat_id, text=response_message)
         
@@ -106,12 +117,13 @@ async def handle_update(update_data):
         print(error_message)
         await bot.send_message(chat_id=chat_id, text=error_message)
 
-@app.post('/webhook')
-async def webhook_handler(request: Request):
-    update_data = await request.json()
-    asyncio.create_task(handle_update(update_data))
-    return {'status': 'ok'}
+@app.route('/webhook', methods=['POST'])
+def webhook_handler():
+    # Flask synchronous hai, isliye asyncio.run() ka istemal
+    update_data = request.get_json(force=True)
+    asyncio.run(handle_update(update_data))
+    return 'ok'
 
-@app.get('/')
+@app.route('/')
 def index():
     return 'Bot is running!'
