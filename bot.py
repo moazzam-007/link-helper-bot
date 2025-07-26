@@ -13,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from urllib.parse import urljoin
 
 # =======================================================
-# === Selenium Helper Function (For Docker Environment) ===
+# === Helper Functions (Yeh synchronous hi rahenge) ===
 # =======================================================
 def get_links_with_selenium(page_url):
     print("Selenium ke zariye links nikale ja rahe hain...")
@@ -23,22 +23,17 @@ def get_links_with_selenium(page_url):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920x1080")
-    
-    # Docker container ke andar ka fixed path
     chrome_options.binary_location = "/usr/bin/google-chrome"
     
     driver = None
     try:
-        # Docker container ke andar ka fixed path
         driver = webdriver.Chrome(options=chrome_options)
         driver.get(page_url)
         
-        # Page ke poori tarah load hone ka intezaar
         WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/share/']"))
         )
         
-        # Page se links nikalna
         link_elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/share/']")
         found_links = set()
         for link_tag in link_elements:
@@ -58,7 +53,6 @@ def get_links_with_selenium(page_url):
             driver.quit()
 
 def get_final_url_from_redirect(start_url):
-    """Yeh function synchronous hai, isliye ise alag se handle karenge"""
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"}
         response = requests.get(start_url, timeout=15, headers=headers, allow_redirects=True)
@@ -67,13 +61,13 @@ def get_final_url_from_redirect(start_url):
         return None
         
 # =======================================================
-# === Bot Logic & Server Code ===
+# === Bot Logic (run_in_executor ke saath) ===
 # =======================================================
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = telegram.Bot(token=TOKEN)
 app = Flask(__name__)
-asgi_app = WsgiToAsgi(app) # WSGI-to-ASGI translator
+asgi_app = WsgiToAsgi(app)
 
 async def handle_update(update_data):
     update = telegram.Update.de_json(update_data, bot)
@@ -84,24 +78,26 @@ async def handle_update(update_data):
     text = update.message.text
 
     if text == "/start":
-        welcome_message = "Hi! I am your Link Helper Bot. \n\nPlease send me a Wishlink URL to get started."
-        await bot.send_message(chat_id=chat_id, text=welcome_message)
+        await bot.send_message(chat_id=chat_id, text="Hi! I am your Link Helper Bot. \n\nPlease send me a Wishlink URL to get started.")
         return
 
     try:
         await bot.send_message(chat_id=chat_id, text="Processing... Please wait. ⏳")
         
+        # === YAHAN FINAL BADLAAV KIYA GAYA HAI ===
+        loop = asyncio.get_running_loop()
         all_final_links = []
+        
         if '/share/' in text:
-            # Simple redirect link ke liye
-            link = get_final_url_from_redirect(text)
+            # Synchronous function ko alag thread me chala rahe hain
+            link = await loop.run_in_executor(None, get_final_url_from_redirect, text)
             if link:
                 all_final_links.append(link)
         else:
-            # Landing page ke liye Selenium
-            redirect_links = get_links_with_selenium(text)
+            # Lambe Selenium process ko alag thread me chala rahe hain
+            redirect_links = await loop.run_in_executor(None, get_links_with_selenium, text)
             for r_link in redirect_links:
-                final_link = get_final_url_from_redirect(r_link)
+                final_link = await loop.run_in_executor(None, get_final_url_from_redirect, r_link)
                 if final_link:
                     all_final_links.append(final_link)
 
@@ -119,7 +115,6 @@ async def handle_update(update_data):
 
 @app.route('/webhook', methods=['POST'])
 def webhook_handler():
-    # Flask synchronous hai, isliye asyncio.run() ka istemal
     update_data = request.get_json(force=True)
     asyncio.run(handle_update(update_data))
     return 'ok'
