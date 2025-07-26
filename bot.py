@@ -1,6 +1,6 @@
 import os
 import re
-import requests
+import httpx # requests ko httpx se replace kar rahe hain
 from flask import Flask, request
 from asgiref.wsgi import WsgiToAsgi
 import telegram
@@ -13,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from urllib.parse import urljoin
 
 # =======================================================
-# === Helper Functions (Yeh synchronous hi rahenge) ===
+# === Helper Functions (Fully Async/Optimized) ===
 # =======================================================
 def get_links_with_selenium(page_url):
     print("Selenium ke zariye links nikale ja rahe hain...")
@@ -52,16 +52,20 @@ def get_links_with_selenium(page_url):
         if driver:
             driver.quit()
 
-def get_final_url_from_redirect(start_url):
+# === YAHAN BADLAAV KIYA GAYA HAI ===
+# requests ko httpx se badal diya gaya hai
+async def get_final_url_from_redirect(start_url: str) -> str | None:
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"}
-        response = requests.get(start_url, timeout=15, headers=headers, allow_redirects=True)
-        return response.url
-    except requests.RequestException:
+        async with httpx.AsyncClient() as client:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"}
+            response = await client.get(start_url, headers=headers, timeout=15, follow_redirects=True)
+            return str(response.url)
+    except httpx.RequestError as e:
+        print(f"Redirect Error: {e}")
         return None
         
 # =======================================================
-# === Bot Logic (run_in_executor ke saath) ===
+# === Bot Logic & Server Code ===
 # =======================================================
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -84,22 +88,23 @@ async def handle_update(update_data):
     try:
         await bot.send_message(chat_id=chat_id, text="Processing... Please wait. ⏳")
         
-        # === YAHAN FINAL BADLAAV KIYA GAYA HAI ===
         loop = asyncio.get_running_loop()
         all_final_links = []
         
         if '/share/' in text:
-            # Synchronous function ko alag thread me chala rahe hain
-            link = await loop.run_in_executor(None, get_final_url_from_redirect, text)
+            # Ab hum async function ko await karenge
+            link = await get_final_url_from_redirect(text)
             if link:
                 all_final_links.append(link)
         else:
             # Lambe Selenium process ko alag thread me chala rahe hain
             redirect_links = await loop.run_in_executor(None, get_links_with_selenium, text)
-            for r_link in redirect_links:
-                final_link = await loop.run_in_executor(None, get_final_url_from_redirect, r_link)
-                if final_link:
-                    all_final_links.append(final_link)
+            
+            # === YAHAN BHI BADLAAV KIYA GAYA HAI ===
+            # Ab hum in links ko aaram se async tareeke se check karenge
+            tasks = [get_final_url_from_redirect(r_link) for r_link in redirect_links]
+            results = await asyncio.gather(*tasks)
+            all_final_links = [res for res in results if res is not None]
 
         if all_final_links:
             response_message = f"Done! ✨\nFound {len(all_final_links)} links:\n\n" + "\n\n".join(all_final_links)
