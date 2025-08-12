@@ -163,7 +163,7 @@ async def handle_update(update_data):
     else:
         await bot.send_message(chat_id=chat_id, text="Please send me a message that contains a valid **wishlink.com** URL.")
 
-@app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['GET', 'POST'])
 def webhook_handler():
     update_data = request.get_json(force=True)
     asyncio.run(handle_update(update_data))
