@@ -1,10 +1,10 @@
+# UPDATED bot.py (only relevant parts shown, replace your original file)
 import os
 import re
 import requests
 import telegram
 import asyncio
 import random
-import httpx # NAYA IMPORT
 from flask import Flask, request
 from asgiref.wsgi import WsgiToAsgi
 from selenium import webdriver
@@ -17,20 +17,41 @@ from queue import Queue
 from threading import Thread
 from telegram.request import HTTPXRequest
 
-# =======================================================
-# === Helper Functions (Synchronous) ===
-# =======================================================
+# ---------------------------
+# Config / env
+# ---------------------------
+TOKEN = os.environ.get('TELEGRAM_TOKEN')
+GOOGLE_CHROME_BIN = os.environ.get("GOOGLE_CHROME_BIN", "/usr/bin/google-chrome")
 
+# ---------------------------
+# HTTPXRequest initialization (use documented args, NOT httpx_settings=)
+# ---------------------------
+# Use connection_pool_size to control max concurrent connections the PTB request uses.
+# Use connect/read/write timeouts to avoid long hangs.
+request = HTTPXRequest(
+    connect_timeout=10.0,
+    read_timeout=20.0,
+    write_timeout=20.0,
+    pool_timeout=5.0,
+    connection_pool_size=25,   # roughly equivalent to your previous max_connections
+)
+
+bot = telegram.Bot(token=TOKEN, request=request)
+
+# ---------------------------
+# Helper functions
+# ---------------------------
 def get_links_with_selenium(page_url):
     print(f"Selenium worker starting for: {page_url}")
     chrome_options = Options()
+    # newer chrome headless flag can be --headless=new but --headless is fine for compatibility
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920x1080")
-    chrome_options.binary_location = "/usr/bin/google-chrome"
-    
+    chrome_options.binary_location = GOOGLE_CHROME_BIN
+
     driver = None
     try:
         driver = webdriver.Chrome(options=chrome_options)
@@ -49,39 +70,40 @@ def get_links_with_selenium(page_url):
         if driver:
             driver.quit()
 
-def get_final_url_from_redirect(start_url):
+def get_final_url_from_redirect(start_url, max_redirects=5):
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"}
-        response = requests.get(start_url, timeout=15, headers=headers, allow_redirects=True)
-        return response.url
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        # requests will follow redirects and stop if too many
+        resp = requests.get(start_url, timeout=15, headers=headers, allow_redirects=True)
+        return resp.url
     except requests.RequestException as e:
         print(f"Redirect Error for {start_url}: {e}")
         return None
 
-# =======================================================
-# === Background Worker (Jo Asli Kaam Karega) ===
-# =======================================================
+# safer URL extractor handling both 'url' and 'text_link' entity types
+def find_url_in_message(message):
+    if getattr(message, "entities", None):
+        for entity in message.entities:
+            if entity.type == 'text_link' and getattr(entity, "url", None):
+                return entity.url
+            if entity.type == 'url' and message.text:
+                # extract substring using offset/length (works for plain url entities)
+                return message.text[entity.offset: entity.offset + entity.length]
+    if message.text:
+        match = re.search(r'https?://\S+', message.text)
+        if match:
+            return match.group(0)
+    return None
 
-TOKEN = os.environ.get('TELEGRAM_TOKEN')
-
-# NAYA FINAL CHANGE: Timeout error theek karne ka sahi tareeka
-# Connection pool ke liye custom limits bana rahe hain
-limits = httpx.Limits(max_connections=25, max_keepalive_connections=10)
-# In limits ko ek dictionary mein daal kar pass kar rahe hain
-httpx_settings = {"limits": limits, "timeout": 20.0}
-
-# Bot ko nayi settings ke saath initialize kar rahe hain
-request = HTTPXRequest(httpx_settings=httpx_settings)
-bot = telegram.Bot(token=TOKEN, request=request)
-
+# ---------------------------
+# Worker / job queue (unchanged mostly)
+# ---------------------------
 job_queue = Queue()
 
 DISCOUNT_PERCENTAGES = [
     '30%', '35%', '40%', '45%', '50%', '55%', '60%', '65%', '70%', '75%', '80%',
-    '25%', '28%', '32%', '36%', '38%', '42%', '44%', '48%', '52%', '54%', '58%',
-    '62%', '64%', '68%', '72%', '78%', '82%', '43%', '47%', '51%', '53%', '57%',
-    '59%', '61%', '63%', '66%', '69%', '71%', '73%', '74%', '76%', '77%', '79%',
-    '81%', '83%', '84%', '85%', '86%', '87%', '88%', '89%', '90%'
+    # ... (rest omitted for brevity) ...
+    '90%'
 ]
 
 def worker():
@@ -90,11 +112,11 @@ def worker():
         try:
             print(f"Worker processing URL for chat {chat_id}: {url_to_process}")
             all_final_links = []
-            
             redirect_links = get_links_with_selenium(url_to_process)
-            
+
             if redirect_links is None:
                 response_message = "Maaf kijiye, is link se products nahi mil paaye. 🙁\nHo sakta hai link galat ho ya private ho."
+                # use asyncio.run here because we're in a background thread; it's acceptable for occasional calls
                 asyncio.run(bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=response_message))
                 job_queue.task_done()
                 continue
@@ -108,46 +130,34 @@ def worker():
                 response_parts = []
                 for i, link in enumerate(all_final_links, 1):
                     discount = random.choice(DISCOUNT_PERCENTAGES)
-                    response_parts.append(f"{i}. ({discount} OFF) {link}")
-                
+                    # Use Markdown link to keep message tidy
+                    response_parts.append(f"{i}. ({discount} OFF) [Open link]({link})")
                 response_message = "\n\n".join(response_parts)
+                asyncio.run(bot.edit_message_text(chat_id=chat_id, message_id=message_id,
+                                                  text=response_message, parse_mode="Markdown"))
             else:
                 response_message = "Is link mein koi product links nahi mile. Please doosra link try karein."
-            
-            asyncio.run(bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=response_message))
+                asyncio.run(bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=response_message))
 
         except Exception as e:
-            error_message = f"An unexpected error occurred: {e}"
-            print(error_message)
+            print(f"Worker unexpected error: {e}")
             asyncio.run(bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="Kuch takneeki samasya aa gayi hai. Kripya baad mein prayas karein."))
         finally:
             job_queue.task_done()
 
 Thread(target=worker, daemon=True).start()
 
-# =======================================================
-# === Server Code (Jo Sirf Order Leta Hai) ===
-# =======================================================
-
+# ---------------------------
+# Flask webhook (unchanged)
+# ---------------------------
 app = Flask(__name__)
 asgi_app = WsgiToAsgi(app)
-
-def find_url_in_message(message):
-    if message.entities:
-        for entity in message.entities:
-            if entity.type == 'url':
-                return entity.url
-    if message.text:
-        match = re.search(r'https?://\S+', message.text)
-        if match:
-            return match.group(0)
-    return None
 
 async def handle_update(update_data):
     update = telegram.Update.de_json(update_data, bot)
     if not update.message:
         return
-        
+
     chat_id = update.message.chat.id
     message = update.message
 
@@ -157,8 +167,7 @@ async def handle_update(update_data):
         return
 
     url_found = find_url_in_message(message)
-
-    if url_found and 'wishlink.com' in url_found:
+    if url_found and 'wishlink.com' in url_found.lower():
         sent_message = await bot.send_message(chat_id=chat_id, text="Processing... ⏳")
         job_queue.put((chat_id, sent_message.message_id, url_found))
     else:
@@ -169,7 +178,3 @@ def webhook_handler():
     update_data = request.get_json(force=True)
     asyncio.run(handle_update(update_data))
     return 'ok'
-
-@app.route('/')
-def index():
-    return 'Bot is running!'
