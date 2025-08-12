@@ -4,6 +4,7 @@ import requests
 import telegram
 import asyncio
 import random
+import httpx # NAYA IMPORT
 from flask import Flask, request
 from asgiref.wsgi import WsgiToAsgi
 from selenium import webdriver
@@ -14,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from urllib.parse import urljoin
 from queue import Queue
 from threading import Thread
-from telegram.request import HTTPXRequest # NAYA IMPORT
+from telegram.request import HTTPXRequest
 
 # =======================================================
 # === Helper Functions (Synchronous) ===
@@ -63,13 +64,18 @@ def get_final_url_from_redirect(start_url):
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
-# NAYA CHANGE: Connection pool ko bada rahe hain taaki timeout na ho
-request = HTTPXRequest(pool_size=25, connect_timeout=10.0, read_timeout=20.0)
+# NAYA FINAL CHANGE: Timeout error theek karne ka sahi tareeka
+# Connection pool ke liye custom limits bana rahe hain
+limits = httpx.Limits(max_connections=25, max_keepalive_connections=10)
+# In limits ko ek dictionary mein daal kar pass kar rahe hain
+httpx_settings = {"limits": limits, "timeout": 20.0}
+
+# Bot ko nayi settings ke saath initialize kar rahe hain
+request = HTTPXRequest(httpx_settings=httpx_settings)
 bot = telegram.Bot(token=TOKEN, request=request)
 
 job_queue = Queue()
 
-# NAYA CHANGE: Random discount percentages ki list
 DISCOUNT_PERCENTAGES = [
     '30%', '35%', '40%', '45%', '50%', '55%', '60%', '65%', '70%', '75%', '80%',
     '25%', '28%', '32%', '36%', '38%', '42%', '44%', '48%', '52%', '54%', '58%',
