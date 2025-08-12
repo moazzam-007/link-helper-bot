@@ -3,7 +3,7 @@ import re
 import requests
 import telegram
 import asyncio
-import random # NAYA IMPORT: Random discount ke liye
+import random
 from flask import Flask, request
 from asgiref.wsgi import WsgiToAsgi
 from selenium import webdriver
@@ -14,6 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from urllib.parse import urljoin
 from queue import Queue
 from threading import Thread
+from telegram.request import HTTPXRequest # NAYA IMPORT
 
 # =======================================================
 # === Helper Functions (Synchronous) ===
@@ -42,7 +43,6 @@ def get_links_with_selenium(page_url):
         return list(found_links)
     except Exception as e:
         print(f"Selenium Error: {e}")
-        # Selenium fail hone par None return karenge taaki error handle kar sakein
         return None
     finally:
         if driver:
@@ -62,7 +62,11 @@ def get_final_url_from_redirect(start_url):
 # =======================================================
 
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
-bot = telegram.Bot(token=TOKEN)
+
+# NAYA CHANGE: Connection pool ko bada rahe hain taaki timeout na ho
+request = HTTPXRequest(pool_size=25, connect_timeout=10.0, read_timeout=20.0)
+bot = telegram.Bot(token=TOKEN, request=request)
+
 job_queue = Queue()
 
 # NAYA CHANGE: Random discount percentages ki list
@@ -81,11 +85,9 @@ def worker():
             print(f"Worker processing URL for chat {chat_id}: {url_to_process}")
             all_final_links = []
             
-            # Selenium se links nikalna
             redirect_links = get_links_with_selenium(url_to_process)
             
-            # NAYA CHANGE: Behtar Error Handling
-            if redirect_links is None: # Agar Selenium fail ho jaaye
+            if redirect_links is None:
                 response_message = "Maaf kijiye, is link se products nahi mil paaye. 🙁\nHo sakta hai link galat ho ya private ho."
                 asyncio.run(bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=response_message))
                 job_queue.task_done()
@@ -97,25 +99,20 @@ def worker():
                     all_final_links.append(final_link)
 
             if all_final_links:
-                # NAYA CHANGE: User ki demand ke anusaar naya output format
                 response_parts = []
                 for i, link in enumerate(all_final_links, 1):
                     discount = random.choice(DISCOUNT_PERCENTAGES)
-                    # Format: 1. (45% OFF) https://link.com
                     response_parts.append(f"{i}. ({discount} OFF) {link}")
                 
-                # Sabhi links ke beech me double newline
                 response_message = "\n\n".join(response_parts)
             else:
                 response_message = "Is link mein koi product links nahi mile. Please doosra link try karein."
             
-            # NAYA CHANGE: Purane message ko edit karna
             asyncio.run(bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=response_message))
 
         except Exception as e:
             error_message = f"An unexpected error occurred: {e}"
             print(error_message)
-            # Error aane par bhi message edit karna
             asyncio.run(bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="Kuch takneeki samasya aa gayi hai. Kripya baad mein prayas karein."))
         finally:
             job_queue.task_done()
@@ -156,9 +153,7 @@ async def handle_update(update_data):
     url_found = find_url_in_message(message)
 
     if url_found and 'wishlink.com' in url_found:
-        # NAYA CHANGE: "Processing" message ka message_id save karna
         sent_message = await bot.send_message(chat_id=chat_id, text="Processing... ⏳")
-        # Queue mein message_id bhi daalna taaki use edit kar sakein
         job_queue.put((chat_id, sent_message.message_id, url_found))
     else:
         await bot.send_message(chat_id=chat_id, text="Please send me a message that contains a valid **wishlink.com** URL.")
