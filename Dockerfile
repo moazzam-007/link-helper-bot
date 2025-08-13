@@ -1,21 +1,35 @@
-# Python ka base image istemal kar rahe hain
+# ------------------------------
+# 1️⃣ Base image
+# ------------------------------
 FROM python:3.11-slim
 
-# System packages + Chrome + ChromeDriver
+# -------------------------------------------------
+# 2️⃣ System packages + Chrome + ChromeDriver
+#    (ek hi RUN block, proper line‑continuation)
+# -------------------------------------------------
+# Install basic utilities, tzdata (for correct timestamps)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     gnupg \
     unzip \
     curl \
     jq \
-    tzdata \                     # proper time‑zone, line‑continue ke saath
-    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google.list \
-    && apt-get update && apt-get install -y \
-    google-chrome-stable \
+    tzdata \
+# ----------------------------------------------------------------
+# Add Google Chrome repository (use gpg key, apt-key is deprecated)
+    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | \
+        gpg --dearmor -o /usr/share/keyrings/google-linux-signing-key.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-key.gpg] \
+        http://dl.google.com/linux/chrome/deb/ stable main" > \
+        /etc/apt/sources.list.d/google.list \
+# ----------------------------------------------------------------
+# Install Chrome, then clean apt lists
+    && apt-get update && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# ChromeDriver install – version ko Chrome ke saath match karte hain
+# -------------------------------------------------
+# 3️⃣ ChromeDriver – version is matched to installed Chrome
+# -------------------------------------------------
 RUN LAST_KNOWN_GOOD_VERSION_URL="https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json" && \
     CHROMEDRIVER_URL=$(curl -s $LAST_KNOWN_GOOD_VERSION_URL | \
         jq -r '.channels.Stable.downloads.chromedriver[] | select(.platform=="linux64") | .url') && \
@@ -25,16 +39,25 @@ RUN LAST_KNOWN_GOOD_VERSION_URL="https://googlechromelabs.github.io/chrome-for-t
     chmod +x /usr/bin/chromedriver && \
     rm chromedriver.zip
 
-# Kaam karne ke liye ek directory bana rahe hain
+# -------------------------------------------------
+# 4️⃣ Work directory
+# -------------------------------------------------
 WORKDIR /app
 
-# Pip ko upgrade karke dependencies install karte hain
+# -------------------------------------------------
+# 5️⃣ Python dependencies
+# -------------------------------------------------
 COPY requirements.txt .
+# Upgrade pip first (helps on slim images)
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Baaki saari project files copy kar rahe hain
+# -------------------------------------------------
+# 6️⃣ Copy source code
+# -------------------------------------------------
 COPY . .
 
-# Server ko start karne ka command (Gunicorn + Uvicorn workers)
+# -------------------------------------------------
+# 7️⃣ Start the ASGI server (Gunicorn + Uvicorn workers)
+# -------------------------------------------------
 CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "bot:asgi_app"]
