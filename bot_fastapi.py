@@ -9,7 +9,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError, TimedOut
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
-from asgiref.wsgi import WsgiToAsgi
+# YAHAN SE WsgiToAsgi WALA IMPORT HATA DIYA GAYA HAI
 from dotenv import load_dotenv
 
 # ------------------------------------------------------------
@@ -152,7 +152,7 @@ async def worker():
 # 8️⃣ FastAPI app (ASGI) – Render में यही सर्विस चलती है
 # ------------------------------------------------------------
 app = FastAPI()
-asgi_app = WsgiToAsgi(app)          # Render expects a WSGI‑compatible object
+# YAHAN SE 'asgi_app = WsgiToAsgi(app)' WALI LINE HATA DI GAYI HAI
 
 @app.on_event("startup")
 async def startup_event():
