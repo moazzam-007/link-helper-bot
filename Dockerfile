@@ -5,30 +5,16 @@ FROM python:3.11-slim
 
 # -------------------------------------------------
 # 2️⃣ System packages + Chrome + ChromeDriver
-#    (ek hi RUN block, proper line‑continuation)
 # -------------------------------------------------
-# Install basic utilities, tzdata (for correct timestamps)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    gnupg \
-    unzip \
-    curl \
-    jq \
-    tzdata \
-# ----------------------------------------------------------------
-# Add Google Chrome repository (use gpg key, apt-key is deprecated)
-    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | \
-        gpg --dearmor -o /usr/share/keyrings/google-linux-signing-key.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-key.gpg] \
-        http://dl.google.com/linux/chrome/deb/ stable main" > \
-        /etc/apt/sources.list.d/google.list \
-# ----------------------------------------------------------------
-# Install Chrome, then clean apt lists
+    wget gnupg unzip curl jq tzdata \
+    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google.list \
     && apt-get update && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------------------------------
-# 3️⃣ ChromeDriver – version is matched to installed Chrome
+# 3️⃣ ChromeDriver (match Chrome version)
 # -------------------------------------------------
 RUN LAST_KNOWN_GOOD_VERSION_URL="https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json" && \
     CHROMEDRIVER_URL=$(curl -s $LAST_KNOWN_GOOD_VERSION_URL | \
@@ -40,7 +26,7 @@ RUN LAST_KNOWN_GOOD_VERSION_URL="https://googlechromelabs.github.io/chrome-for-t
     rm chromedriver.zip
 
 # -------------------------------------------------
-# 4️⃣ Work directory
+# 4️⃣ Working directory
 # -------------------------------------------------
 WORKDIR /app
 
@@ -48,16 +34,18 @@ WORKDIR /app
 # 5️⃣ Python dependencies
 # -------------------------------------------------
 COPY requirements.txt .
-# Upgrade pip first (helps on slim images)
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # -------------------------------------------------
-# 6️⃣ Copy source code
+# 6️⃣ Copy source code (including bot_fastapi.py)
 # -------------------------------------------------
 COPY . .
 
 # -------------------------------------------------
-# 7️⃣ Start the ASGI server (Gunicorn + Uvicorn workers)
+# 7️⃣ Start command (FastAPI version)
 # -------------------------------------------------
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "bot:asgi_app"]
+# Render sets `$PORT` automatically (default 10000)
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker",
+     "--bind", "0.0.0.0:${PORT:-10000}",
+     "bot_fastapi:asgi_app"]
