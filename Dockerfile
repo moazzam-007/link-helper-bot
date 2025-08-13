@@ -4,17 +4,14 @@
 FROM python:3.11-slim
 
 # -------------------------------------------------
-# 2️⃣ System packages + Chrome + ChromeDriver (Yahan tabdeeli ki gayi hai)
+# 2️⃣ System packages + Chrome + ChromeDriver
 # -------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget gnupg curl unzip jq \
-    # Google Chrome key add karne ka naya aur mehfooz tareeqa
     && install -m 0755 -d /etc/apt/keyrings \
     && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg \
     && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google.list \
-    # Ab Chrome install karein
     && apt-get update && apt-get install -y google-chrome-stable \
-    # Safai
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------------------------------
@@ -47,7 +44,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY . .
 
 # -------------------------------------------------
-# 7️⃣ Start command (FastAPI version)
+# 7️⃣ Start command (FastAPI version) - YAHAN TABDEELI KI GAYI HAI
 # -------------------------------------------------
 # Render sets `$PORT` automatically (default 10000)
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT:-10000}", "bot_fastapi:asgi_app"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT:-10000}", "bot_fastapi:app"]
