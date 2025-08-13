@@ -1,111 +1,158 @@
-import logging
-import sys
-import threading
-import queue
-import re
-import time
-import asyncio
 import os
-from flask import Flask, request as flask_request
+import re
+import httpx  # requests ko httpx se replace kar rahe hain
+from flask import Flask, request
+from asgiref.wsgi import WsgiToAsgi
 import telegram
-from telegram.request import HTTPXRequest
-import httpx
-import requests
+import asyncio
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from urllib.parse import urljoin
+import random
 
-# ------------------ Logging Setup ------------------
-logging.basicConfig(
-    level=logging.INFO,
-    stream=sys.stdout,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+# =======================================================
+# === Helper: Random Titles & Discounts ===
+# =======================================================
+DEAL_TITLES = [
+    "🔥 Deal Alert!", "⚡ Loot Alert!", "🎯 Short Time Deal!",
+    "💥 Mega Discount!", "🚀 Hot Pick!", "⏳ Limited Time!",
+    "💎 Exclusive Deal!", "🎁 Special Offer!", "🏷️ Price Drop!",
+    "🛍️ Shop Now!", "📦 Grab It Fast!", "⭐ Trending Deal!",
+    "💡 Smart Buy!", "🎉 Big Savings!", "🛒 Hot Sale!"
+]
 
-# ------------------ Config ------------------
-TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-PORT = int(os.getenv("PORT", 10000))
+def random_discount():
+    return f"{random.randint(40, 90)}% OFF"
 
-# ------------------ Flask App ------------------
-app = Flask(__name__)
+def dedupe_keep_order(items):
+    seen = set()
+    out = []
+    for x in items:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
 
-# ------------------ Telegram Bot Setup ------------------
-httpx_settings = httpx.Timeout(10.0, connect=5.0)
-httpx_request = HTTPXRequest(httpx_settings=httpx_settings)
-bot = telegram.Bot(token=TOKEN, request=httpx_request)
-
-# ------------------ Job Queue ------------------
-job_queue = queue.Queue()
-
-# ------------------ Selenium Setup ------------------
-def get_driver():
+# =======================================================
+# === Helper Functions (Fully Async/Optimized) ===
+# =======================================================
+def get_links_with_selenium(page_url):
+    print("Selenium ke zariye links nikale ja rahe hain...")
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    return webdriver.Chrome(options=chrome_options)
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920x1080")
+    chrome_options.binary_location = "/usr/bin/google-chrome"
 
-# ------------------ Link Scraper ------------------
-def scrape_final_url(original_url):
+    driver = None
     try:
-        logger.info(f"Scraping: {original_url}")
-        driver = get_driver()
-        driver.get(original_url)
-        time.sleep(2)
-        final_url = driver.current_url
-        driver.quit()
-        return final_url
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(page_url)
+
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/share/']"))
+        )
+
+        link_elements = driver.find_elements(By.CSS_SELECTOR, "a[href*='/share/']")
+        found_links = set()
+        for link_tag in link_elements:
+            href = link_tag.get_attribute('href')
+            if href:
+                full_redirect_link = urljoin(page_url, href)
+                found_links.add(full_redirect_link)
+
+        print(f"Selenium se {len(found_links)} links mile.")
+        return list(found_links)
+
     except Exception as e:
-        logger.error(f"Scraping error: {e}")
-        return original_url
+        print(f"Selenium Error: {e}")
+        return []
+    finally:
+        if driver:
+            driver.quit()
 
-# ------------------ Worker Thread ------------------
-def worker():
-    while True:
-        chat_id, url = job_queue.get()
-        try:
-            final_url = scrape_final_url(url)
+# requests ko httpx se badal diya gaya hai
+async def get_final_url_from_redirect(start_url: str) -> str | None:
+    try:
+        async with httpx.AsyncClient() as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/138.0.0.0 Safari/537.36"
+            }
+            response = await client.get(start_url, headers=headers, timeout=15, follow_redirects=True)
+            return str(response.url)
+    except httpx.RequestError as e:
+        print(f"Redirect Error: {e}")
+        return None
 
-            discount = f"{round(5 + (10 * time.time()) % 40)}% OFF"
-            message = f"🎯 *Deal Found!* 🎯\n\n🔗 [Click Here to Buy]({final_url})\n💸 Discount: {discount}"
+# =======================================================
+# === Bot Logic & Server Code ===
+# =======================================================
+TOKEN = os.environ.get('TELEGRAM_TOKEN')
+bot = telegram.Bot(token=TOKEN)
+app = Flask(__name__)
+asgi_app = WsgiToAsgi(app)
 
-            bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
-        except Exception as e:
-            logger.exception(f"Error in worker: {e}")
-            bot.send_message(chat_id=chat_id, text="❌ Failed to process your link.")
-        finally:
-            job_queue.task_done()
+async def handle_update(update_data):
+    update = telegram.Update.de_json(update_data, bot)
+    if not update.message or not update.message.text:
+        return
 
-threading.Thread(target=worker, daemon=True).start()
+    chat_id = update.message.chat.id
+    text = update.message.text.strip()
 
-# ------------------ Webhook Handler ------------------
-@app.route(f"/{TOKEN}", methods=["POST"])
+    if text == "/start":
+        await bot.send_message(
+            chat_id=chat_id,
+            text="Hi! I am your Link Helper Bot.\n\nSend me a Wishlink URL to get started."
+        )
+        return
+
+    try:
+        await bot.send_message(chat_id=chat_id, text="Processing... Please wait. ⏳")
+
+        loop = asyncio.get_running_loop()
+        all_final_links = []
+
+        if '/share/' in text:
+            link = await get_final_url_from_redirect(text)
+            if link:
+                all_final_links.append(link)
+        else:
+            redirect_links = await loop.run_in_executor(None, get_links_with_selenium, text)
+            tasks = [get_final_url_from_redirect(r_link) for r_link in redirect_links]
+            results = await asyncio.gather(*tasks)
+            all_final_links = [res for res in results if res is not None]
+
+        # De-duplicate while keeping order
+        all_final_links = dedupe_keep_order(all_final_links)
+
+        if all_final_links:
+            title = random.choice(DEAL_TITLES)
+            links_with_discounts = [f"{random_discount()} — {link}" for link in all_final_links]
+            response_message = f"{title}\n\n" + "\n".join(links_with_discounts)
+        else:
+            response_message = "Sorry, I couldn't find any links. Please check the URL and try again."
+
+        await bot.send_message(chat_id=chat_id, text=response_message)
+
+    except Exception as e:
+        error_message = f"An error occurred: {e}"
+        print(error_message)
+        await bot.send_message(chat_id=chat_id, text=error_message)
+
+@app.route('/webhook', methods=['POST'])
 def webhook_handler():
-    try:
-        update_data = flask_request.get_json(force=True)
-        update = telegram.Update.de_json(update_data, bot)
+    update_data = request.get_json(force=True)
+    asyncio.run(handle_update(update_data))
+    return 'ok'
 
-        if update.message and update.message.text:
-            text = update.message.text.strip()
-            chat_id = update.message.chat_id
-
-            if re.match(r"https?://", text):
-                bot.send_message(chat_id=chat_id, text="🔍 Processing your link...")
-                job_queue.put((chat_id, text))
-            else:
-                bot.send_message(chat_id=chat_id, text="⚠ Please send a valid URL.")
-
-        return "ok", 200
-    except Exception as e:
-        logger.exception("Error handling update")
-        return "error", 500
-
-# ------------------ Root Route ------------------
-@app.route("/", methods=["GET"])
+@app.route('/')
 def index():
-    return "Bot is running!", 200
-
-# ------------------ Main ------------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    return 'Bot is running!'
