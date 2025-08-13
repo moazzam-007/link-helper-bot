@@ -9,13 +9,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     jq \
     ca-certificates \
-    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /usr/share/keyrings/google-chrome-archive-keyring.gpg \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update && apt-get install -y \
+    && apt-get clean
+
+# Chrome repository key add karna (secure method)
+RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub && \
+    mkdir -p /usr/share/keyrings && \
+    gpg --dearmor /usr/share/keyrings/google-chrome-archive-keyring.gpg
+
+# Chrome repository add karna
+RUN echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
+
+# Chrome install karna
+RUN apt-get update && apt-get install -y \
     google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# NAYA AUR SAHI TAREEKA: ChromeDriver install kar rahe hain
+# NAYA AUR SAHI TAREEKA: ChromeDriver install karne ke liye
 RUN LAST_KNOWN_GOOD_VERSION_URL="https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json" && \
     CHROMEDRIVER_URL=$(curl -s $LAST_KNOWN_GOOD_VERSION_URL | jq -r '.channels.Stable.downloads.chromedriver[] | select(.platform=="linux64") | .url') && \
     wget -q $CHROMEDRIVER_URL -O chromedriver.zip && \
