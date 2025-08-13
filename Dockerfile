@@ -46,6 +46,4 @@ COPY . .
 # 7️⃣ Start command (FastAPI version)
 # -------------------------------------------------
 # Render sets `$PORT` automatically (default 10000)
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker",
-     "--bind", "0.0.0.0:${PORT:-10000}",
-     "bot_fastapi:asgi_app"]
+CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:${PORT:-10000}", "bot_fastapi:asgi_app"]
